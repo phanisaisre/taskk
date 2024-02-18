@@ -1,0 +1,179 @@
+Here prometheus,grafana,node-exporter setup has done on single ubuntu server only.
+I used the same server as a monitoring system and system to be monitored,so i specified local host only in inventory file of ansible. Instead we can setup monitor server in single severs and nodes to be monitored in other servers 
+Example:
+[monitorserver]
+main server
+[nodeservers]
+server1  
+server2
+
+But I used the single server for all the requirements by using below setup
+
+Step1:Hosts adding
+
+vim /etc/ansible/hosts
+
+[monitorserver]
+localhost ansible_connection=local
+
+Step2: Playbook has been developed by using the three roles to set up the environments
+
+vim playbook.yml
+
+- name: install monitoring stack
+  hosts: monitorserver
+  become: yes
+  roles:
+  - prometheus
+  - grafana
+  - node-exporter
+ 
+Step3: Playbook Execution
+
+To run the playbook
+
+sudo ansible-playbook -i /etc/ansible/hosts playbook.yml
+
+Once I done the setup of prometheus,grafana,node-exporter, verfied the prometheus server for the node exporter logs and created the dashboard for the node exporter logs, then I switched into nginx setup part 
+
+Step4:Nginx installation 
+
+a)To install nginx, run the following commands:
+
+sudo apt update
+apt-cache policy nginx
+sudo apt install nginx
+
+Let's make sure that the basic metric module is configured with the nginx.
+
+nginx -V
+
+let's start it.
+
+sudo systemctl start nginx
+
+Now it should be in a running state.
+
+sudo systemctl status nginx
+
+b)Expose Basic Nginx Metrics
+
+Now the configuration file.
+
+vim /etc/nginx/conf.d/status.conf
+
+We'll use the location Nginx directive to expose basic metrics on port 8080 /status page.
+
+nginx/status.conf
+
+server {
+    listen 8080;
+    # Optionally: allow access only from localhost
+    # listen 127.0.0.1:8080;
+
+    server_name _;
+
+    location /status {
+        stub_status;
+    }
+}
+
+Always verify if the configuration is valid before restarting Nginx.
+
+nginx -t
+
+To update the Nginx config without downtime, you can use reload command.
+
+systemctl reload nginx
+Now we can access http://<ip>:8080/status page.
+
+
+Step5:Install Nginx Prometheus Exporter
+
+let's create a folder for the exporter and switch directory.
+
+mkdir /opt/nginx-exporter
+cd /opt/nginx-exporter
+
+ Let's call it an nginx-exporter user and a group.
+
+sudo useradd --system --no-create-home --shell /bin/false nginx-exporter
+
+We can use curl to download the exporter on the Ubuntu machine.
+
+curl -L https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v0.11.0/nginx-prometheus-exporter_0.11.0_linux_amd64.tar.gz -o nginx-prometheus-exporter_0.11.0_linux_amd64.tar.gz
+
+Extract the prometheus exporter from the archive.
+
+tar -zxf nginx-prometheus-exporter_0.11.0_linux_amd64.tar.gz
+
+You can also remove it to save some space.
+
+rm nginx-prometheus-exporter_0.11.0_linux_amd64.tar.gzLet's make sure that we downloaded the correct binary by checking the version of the exporter.
+
+./nginx-prometheus-exporter --version
+
+let's update the ownership on the exporter folder.
+
+chown -R nginx-exporter:nginx-exporter /opt/nginx-exporter
+
+To run it, let's also create a systemd service file. In case it exits systemd manager can restart it. It's the standard way to run Linux daemons.
+
+vim /etc/systemd/system/nginx-exporter.service
+
+[Unit]
+Description=Nginx Exporter
+Wants=network-online.target
+After=network-online.target
+
+StartLimitIntervalSec=0
+
+[Service]
+User=nginx-exporter
+Group=nginx-exporter
+Type=simple
+Restart=on-failure
+RestartSec=5s
+
+ExecStart=/opt/nginx-exporter/nginx-prometheus-exporter \
+    -nginx.scrape-uri=http://localhost:8080/status
+
+[Install]
+WantedBy=multi-user.target
+
+Enable the service to automatically start the daemon on Linux restart.
+
+systemctl enable nginx-exporter
+
+Then start the nginx prometheus exporter.
+
+systemctl start nginx-exporter
+
+Check the status of the service.
+
+systemctl status nginx-exporter
+
+If your exporter fails to start, you can check logs to find the error message.
+
+journalctl -u nginx-exporter -f --no-pager
+
+To verify that Prometheus exporter can access nginx and properly scrape metrics, use curl command and default 9113 port for the exporter.
+
+curl localhost:9113/metrics
+
+Finally I updated the below nginx-prometheus-exporter configurtion in the defaults variables of prometheus default directory so that it will pull nginx mertics
+
+prometheus_var_config:
+  global:
+    scrape_interval: "{{ prometheus_scrape_interval }}"
+    evaluation_interval: 5s
+    external_labels:
+      env: '{{ prometheus_env }}'
+  scrape_configs:
+    - job_name: prometheus
+      scrape_interval: 5m
+      static_configs:
+        - targets: ['{{ inventory_hostname }}:9090']
+   - job_name: "nginx-prometheus-exporter"
+     static_configs:
+       - targets: ["localhost:9113"]

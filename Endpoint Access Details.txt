@@ -1,0 +1,11 @@
+Endpoint details:
+
+Prometheus:http://54.198.170.193:9090/classic/targets
+
+Grafana: http://54.198.170.193:3000/
+
+In case if you are unable to view the dashboards via json file you can access using below credentials
+
+User Detaails:
+username: admin
+password: abc1234
